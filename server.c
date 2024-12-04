@@ -9,6 +9,7 @@
 #include <limits.h>
 #include <signal.h>
 #include <ucontext.h>
+#include <poll.h>
 #define BFUTILS_VECTOR_IMPLEMENTATION
 #include "bfutils_vector.h"
 #define BFUTILS_HASHMAP_IMPLEMENTATION
@@ -223,6 +224,16 @@ void sighandler(int signal) {
     printf("Exiting the program...\n");
 }
 
+void close_safe(int fd) {
+    shutdown(fd, SHUT_WR);
+    char buf[1024];
+    int r;
+    do {
+        r = read(fd, buf, 1024);
+    } while(r > 0);
+    close(fd);
+}
+
 int main (int argc, char *argv[]) {
     int ret = 0;
     struct option *options = NULL;
@@ -276,7 +287,7 @@ int main (int argc, char *argv[]) {
     struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons((short) port), .sin_addr = {.s_addr = htonl(INADDR_ANY)}};
     struct sockaddr_in client_addr;
     socklen_t client_addr_len = sizeof(client_addr);
-    
+        
     if (bind(sock, (struct sockaddr*) &addr, sizeof(addr)) < 0) {
         perror("bind");
         defer_return(1);
@@ -291,11 +302,15 @@ int main (int argc, char *argv[]) {
     while ((fd = accept(sock, (struct sockaddr*) &client_addr, &client_addr_len)) > 0) {
         char *msg = NULL;
         int l;
+        struct pollfd fds = {.fd = fd, .events = POLLIN | POLLHUP };
         do {
             char buffer[1024] = {0};
             l = recv(fd, buffer, 1024, 0);
             string_push_cstr(msg, buffer);
-        } while(l == 1024);
+            if (poll(&fds, 1, 100) < 1) {
+                break;
+            }
+        } while(1);
         HttpReq req = parse_http_request(msg);
         HttpRes res = handle_request(&req, files);
         char *res_bytes = http_response_to_bytes(&res);
@@ -305,7 +320,7 @@ int main (int argc, char *argv[]) {
         http_response_free(&res);
         vector_free(res_bytes);
         vector_free(msg);
-        close(fd);
+        close_safe(fd);
     }
 
 defer:
