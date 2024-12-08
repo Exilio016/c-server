@@ -37,8 +37,15 @@ typedef struct {
     char *body;
 } HttpRes;
 
+void http_header_free(void *obj) {
+    HttpHeader *header = (HttpHeader*) obj;
+    vector_free(header->key);
+    vector_free(header->value);
+}
+
 HttpReq parse_http_request(const char *request) {
     HttpReq req = {0};
+    req.headers = hashmap(http_header_free);
     char **lines = string_split(request, "\r\n");
     if(vector_length(lines) > 0) {
         char **status_line = string_split(lines[0], " ");
@@ -79,16 +86,6 @@ HttpReq parse_http_request(const char *request) {
     }
     vector_free(lines);
     return req;
-}
-
-void http_header_free(HttpHeader *headers) {
-    HashmapIterator it = hashmap_iterator(headers);
-    while(hashmap_iterator_has_next(&it)) {
-        HttpHeader header = hashmap_iterator_next(headers, &it);
-        vector_free(header.key);
-        vector_free(header.value);
-    }
-    hashmap_free(headers);
 }
 
 void print_http_request(HttpReq *req) {
@@ -180,7 +177,7 @@ char *get_file_mime_type(const char *path) {
 
 HttpRes handle_request(HttpReq *req, char *folder) {
     HttpRes res = {.status_code = 200};
-    res.headers = NULL;
+    res.headers = hashmap(http_header_free);
     char *path = NULL;
     char *body = NULL;
     string_push_cstr(path, folder);
@@ -209,12 +206,12 @@ void http_request_free(HttpReq *req) {
     vector_free(req->protocol);
     vector_free(req->body);
     vector_free(req->path);
-    http_header_free(req->headers);
+    hashmap_free(req->headers);
 }
 
 void http_response_free(HttpRes *res) {
     vector_free(res->body);
-    http_header_free(res->headers);
+    hashmap_free(res->headers);
 }
 
 
