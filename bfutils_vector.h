@@ -14,6 +14,12 @@ USAGE:
 
     Functions (macros):
 
+        vector:
+            T *vector(T, void (*)(void*)); Initializes a vector.
+            A vector doesn't needs to be initialized using this function, initializing with NULL will work fine.
+            This function is to be used when the internal elements of the vector needs to be free when freeing the vector.
+            The second parameter provided is a function to free an element of the vector. The function will receive a pointer to the element as a "void*".
+
         vector_header: 
             BFUtilsVectorHeader *vector_header(T*); Returns the header object.
 
@@ -34,6 +40,7 @@ USAGE:
 
         vector_free:
             void vector_free(T*); Frees the vector.
+            If an element_free function was provided during the vector initialization, this function will be called for each element of the vector, passing a pointer to the element.
 
         string_push:
             void string_push(char *, const char*); Appends to the end of a char* vector another char* vector.
@@ -95,6 +102,7 @@ LICENSE:
 
 #ifndef BFUTILS_VECTOR_NO_SHORT_NAME
 
+#define vector bfutils_vector
 #define vector_header bfutils_vector_header
 #define vector_capacity bfutils_vector_capacity
 #define vector_length bfutils_vector_length
@@ -124,26 +132,37 @@ LICENSE:
 typedef struct {
     size_t length;
     size_t capacity;
+    void (*element_free)(void*);
 } BFUtilsVectorHeader;
 
 #define bfutils_vector_header(v) ((v) ? (BFUtilsVectorHeader *) (v) - 1 : NULL)
 #define bfutils_vector_capacity(v) ((v) ? bfutils_vector_header((v))->capacity : 0)
+#define bfutils_vector_element_free(v) ((v) ? bfutils_vector_header((v))->element_free : NULL)
 #define bfutils_vector_length(v) ((v) ? bfutils_vector_header((v))->length : 0)
-#define bfutils_vector_new_capacity(v) ((v) ? (bfutils_vector_capacity((v)) * 1.5) : 128)
+#define bfutils_vector_new_capacity(v) (bfutils_vector_capacity(v) > 0 ? (bfutils_vector_capacity((v)) * 1.5) : 128)
 #define bfutils_vector_push(v, e) ((v) = bfutils_vector_grow((v), sizeof(*(v)), bfutils_vector_length((v)) + 1),\
     (v)[bfutils_vector_header((v))->length++] = e)
 #define bfutils_vector_pop(v) ((v)[--bfutils_vector_header((v))->length])
-#define bfutils_vector_free(v) (BFUTILS_FREE(bfutils_vector_header((v))), (v) = NULL)
+#define bfutils_vector_free(v) (bfutils_vector_free_func(v, sizeof(*(v))), (v) = NULL)
 #define bfutils_vector_ensure_capacity(v, c) ((v) = bfutils_vector_capacity_grow((v), sizeof(*(v)), (c)))
 #define bfutils_string_push_cstr(s, a) ((s) = bfutils_string_push_cstr_f((s), (a)))
 #define bfutils_string_push_str(s, a) ((s) = bfutils_string_push_str_f((s), (a)))
+#define bfutils_vector(T, element_free) (bfutils_vector_with_free((element_free), sizeof(T)))
 
+#define BFUTILS_VECTOR_FREE_WRAPPER(name, T, f) void name(void *addr) {\
+    T *element_addr = (T*) addr; \
+    f(*element_addr); \
+}
+
+
+extern void *bfutils_vector_with_free(void (*element_free)(void*), size_t element_size);
 extern void *bfutils_vector_grow(void *vector, size_t element_size, size_t length);
 extern void *bfutils_vector_capacity_grow(void *vector, size_t element_size, size_t capacity);
 extern char* bfutils_string_push_cstr_f(char *str, const char *cstr);
 extern char* bfutils_string_push_str_f(char *str, const char *s);
 extern char** bfutils_string_split(const char *cstr, const char *delim);
 extern char* bfutils_string_format(const char *format, ...);
+extern void bfutils_vector_free_func(void *vector, size_t element_size);
 
 #endif // VECTOR_H
 #ifdef BFUTILS_VECTOR_IMPLEMENTATION
@@ -151,13 +170,35 @@ extern char* bfutils_string_format(const char *format, ...);
 #include <stdarg.h>
 #include <string.h>
 
+void bfutils_vector_free_func(void *vector, size_t element_size) {
+    if (vector == NULL) return;
+
+    if (bfutils_vector_element_free(vector) != NULL) {
+        for(int i = 0; i < bfutils_vector_length(vector); i++) {
+            bfutils_vector_element_free(vector)((unsigned char*) vector + (element_size * i));
+        }
+    }
+
+    BFUTILS_FREE(bfutils_vector_header(vector));
+}
+void *bfutils_vector_with_free(void (*element_free) (void*), size_t element_size) {
+    BFUtilsVectorHeader *header = BFUTILS_REALLOC(NULL, sizeof(BFUtilsVectorHeader));
+    header->capacity = 0;
+    header->length = 0;
+    header->element_free = element_free;
+    void *vector = (void*)(header + 1);
+    return vector;
+}
+
 void *bfutils_vector_grow(void *vector, size_t element_size, size_t length) {
     if (bfutils_vector_capacity(vector) < length) {
         size_t length = bfutils_vector_length(vector);
         size_t capacity = bfutils_vector_new_capacity(vector);
+        void (*element_free)(void*) = bfutils_vector_element_free(vector);
         BFUtilsVectorHeader *header = BFUTILS_REALLOC(bfutils_vector_header(vector), sizeof(BFUtilsVectorHeader) + (element_size * capacity));
         header->capacity = capacity;
         header->length = length;
+        header->element_free = element_free;
         vector = (void*)(header + 1);
     }
     return vector;
@@ -166,9 +207,11 @@ void *bfutils_vector_grow(void *vector, size_t element_size, size_t length) {
 void *bfutils_vector_capacity_grow(void *vector, size_t element_size, size_t capacity) {
     if (bfutils_vector_capacity(vector) < capacity) {
         size_t length = bfutils_vector_length(vector);
+        void (*element_free)(void*) = bfutils_vector_element_free(vector);
         BFUtilsVectorHeader *header = BFUTILS_REALLOC(bfutils_vector_header(vector), sizeof(BFUtilsVectorHeader) + (element_size * capacity));
         header->capacity = capacity;
         header->length = length;
+        header->element_free = element_free;
         vector = (void*)(header + 1);
     }
     return vector;
@@ -205,7 +248,7 @@ char **bfutils_string_split(const char *cstr, const char *delim) {
     while (res != NULL) {
         char *t = NULL;
         bfutils_string_push_cstr(t, res);
-        vector_push(list, t);
+        bfutils_vector_push(list, t);
         res = strtok_r(NULL, delim, &saveptr);
     }
 
@@ -218,7 +261,7 @@ char* bfutils_string_format(const char *format, ...) {
     va_list list;
     va_start(list, format);
     int l = vsnprintf(res, 0, format, list);
-    vector_ensure_capacity(res, l + 1);
+    bfutils_vector_ensure_capacity(res, l + 1);
     va_end(list);
 
     va_start(list, format);

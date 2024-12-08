@@ -19,6 +19,12 @@ USAGE:
 
     Functions (macros):
 
+        hashmap:
+            T *hashmap(void (*)(void*)); Initializes a hashmap.
+            This function needs to be used only when the key or value needs to be free.
+            Otherwise you can simply initialize a hashmap with NULL.
+            The function passed will be called for each element inserted in the hashmap when hashmap_free is called, and it will receive a pointer to the element.
+
         hashmap_header:
             BFUtilsHashmapHeader *hashmap_header(T*); Return a pointer to the hashmap header.
 
@@ -48,6 +54,7 @@ USAGE:
 
         hashmap_free:
             void hashmap_free(T*); Frees the hashmap.
+            If the hashmap was initialized with hashmap funtion. The element_free function provided during initialization will be called for each element.
         
         hashmap_iterator:
             HashmapIterator hashmap_iterator(T*); Returns an iterator for the hashmap.
@@ -119,6 +126,7 @@ typedef struct {
     size_t length;
     unsigned char *slots;
     unsigned char *removed;
+    void (*element_free)(void*);
 } BFUtilsHashmapHeader;
 
 typedef struct {
@@ -148,6 +156,7 @@ typedef struct {
 #define hashmap_iterator_previous bfutils_hashmap_iterator_previous
 #define hashmap_iterator_has_next bfutils_hashmap_iterator_has_next
 #define hashmap_iterator_has_previous bfutils_hashmap_iterator_has_previous
+#define hashmap bfutils_hashmap
 
 typedef BFUtilsHashmapHeader HashmapHeader; 
 typedef BFUtilsHashmapIterator HashmapIterator; 
@@ -198,17 +207,18 @@ typedef BFUtilsHashmapIterator HashmapIterator;
 #define bfutils_string_hashmap_contains(h, k) (bfutils_hashmap_get_position((h), (k), sizeof(*(h)), offsetof(__typeof__(*(h)), key), sizeof((h)->key), 1) > 0)
 #define bfutils_string_hashmap_remove(h, k) ((h) = bfutils_hashmap_resize((h), sizeof(*(h)), offsetof(typeof(*(h)), key), sizeof((h)->key), 1) ,\
     (h)[bfutils_hashmap_remove_key((h), (k), sizeof(*(h)), offsetof(__typeof__(*(h)), key), sizeof((h)->key), 1)].value)
-#define bfutils_hashmap_free(h) (bfutils_hashmap_free_f((h)), (h) = NULL)
+#define bfutils_hashmap_free(h) (bfutils_hashmap_free_f((h), sizeof(*(h))), (h) = NULL)
 
 #define bfutils_hashmap_iterator_next(h, i) ((h)[bfutils_hashmap_iterator_next_position(i)])
 #define bfutils_hashmap_iterator_previous(h, i) ((h)[bfutils_hashmap_iterator_previous_position(i)])
+#define bfutils_hashmap(element_free) (bfutils_hashmap_with_free(element_free))
 
 extern void *bfutils_hashmap_resize(void *hm, size_t element_size, size_t key_offset, size_t key_size, int is_string);
 extern size_t bfutils_hashmap_insert_position(void *hm, const void *key, size_t element_size, size_t key_offset, size_t key_size, int is_string);
 extern size_t bfutils_hashmap_function(const void* key, size_t key_size);
 extern long bfutils_hashmap_get_position(void *hm, const void *key, size_t element_size, size_t key_offset, size_t key_size, int is_string);
 extern long bfutils_hashmap_remove_key(void *hm, const void *key, size_t element_size, size_t key_offset, size_t key_size, int is_string);
-extern void bfutils_hashmap_free_f(void *hm);
+extern void bfutils_hashmap_free_f(void *hm, size_t element_size);
 
 extern BFUtilsHashmapIterator bfutils_hashmap_iterator(void *hm);
 extern BFUtilsHashmapIterator bfutils_hashmap_iterator_reverse(void *hm);
@@ -216,10 +226,21 @@ extern int bfutils_hashmap_iterator_has_next(BFUtilsHashmapIterator *it);
 extern int bfutils_hashmap_iterator_has_previous(BFUtilsHashmapIterator *it);
 extern size_t bfutils_hashmap_iterator_next_position(BFUtilsHashmapIterator *it);
 extern size_t bfutils_hashmap_iterator_previous_position(BFUtilsHashmapIterator *it);
+extern void *bfutils_hashmap_with_free(void (*element_free)(void*));
 
 #endif // HASHMAP_H
 #ifdef BFUTILS_HASHMAP_IMPLEMENTATION
 #include <string.h>
+
+void *bfutils_hashmap_with_free(void (*element_free)(void*)) {
+    BFUtilsHashmapHeader *header = (BFUtilsHashmapHeader*) BFUTILS_HASHMAP_REALLOC(NULL, sizeof(BFUtilsHashmapHeader));
+    header->length = 0;
+    header->insert_count = 0;
+    header->element_free = element_free;
+    header->slots = NULL;
+    header->removed = NULL;
+    return (void*) (header + 1);
+}
 
 void *bfutils_hashmap_resize(void *hm, size_t element_size, size_t key_offset, size_t key_size, int is_string) {
     int need_to_grow = bfutils_hashmap_length(hm) == 0 || bfutils_hashmap_insert_count(hm) / (double) bfutils_hashmap_length(hm) > 0.5;
@@ -350,7 +371,16 @@ long bfutils_hashmap_get_position(void *hm, const void *key, size_t element_size
     return -1;
 }
 
-void bfutils_hashmap_free_f(void *hm) {
+void bfutils_hashmap_free_f(void *hm, size_t element_size) {
+    if (hm == NULL) return;
+    if (bfutils_hashmap_header(hm)->element_free != NULL) {
+        BFUtilsHashmapIterator it = bfutils_hashmap_iterator(hm);
+        while(bfutils_hashmap_iterator_has_next(&it)) {
+            size_t pos = bfutils_hashmap_iterator_next_position(&it);
+            bfutils_hashmap_header(hm)->element_free((unsigned char*) hm + (pos * element_size));
+        }
+    }
+
     BFUTILS_HASHMAP_FREE(bfutils_hashmap_header(hm)->slots);
     BFUTILS_HASHMAP_FREE(bfutils_hashmap_header(hm)->removed);
     BFUTILS_HASHMAP_FREE(bfutils_hashmap_header(hm));
