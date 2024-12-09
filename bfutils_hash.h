@@ -42,6 +42,8 @@ USAGE:
 
         string_hashmap_push:
             void string_hashmap_push(T*, const char*, TV); Inserts an element to the hashmap.
+            If the key already exists in the hashmap, its value will be replaced.
+            And if the hashmap was initialized with hashmap function, the element_free function will be called for the replaced element.
 
         string_hashmap_get: 
             TV string_hashmap_get(T*, const char *); Returns an element value from the hashmap.
@@ -260,11 +262,12 @@ void *bfutils_hashmap_resize(void *hm, size_t element_size, size_t key_offset, s
         old_data = (unsigned char*) BFUTILS_HASHMAP_MALLOC(element_size * old_length);
         memcpy(old_data, hm, element_size * old_length);
     }
-
+    void (*element_free)(void*) = bfutils_hashmap_header(hm) ? bfutils_hashmap_header(hm)->element_free : NULL;
     BFUtilsHashmapHeader *header = (BFUtilsHashmapHeader*) BFUTILS_HASHMAP_REALLOC(bfutils_hashmap_header(hm), sizeof(BFUtilsHashmapHeader) + (element_size * length));
     header->slots = (unsigned char*) BFUTILS_HASHMAP_CALLOC(1, length / 8 + 1);
     header->removed = (unsigned char*) BFUTILS_HASHMAP_CALLOC(1, length / 8 + 1);
     header->length = length;
+    header->element_free = element_free;
     header->insert_count = 0;
     hm = (void*) (header + 1);
 
@@ -321,8 +324,12 @@ size_t bfutils_hashmap_insert_position(void *hm, const void *key, size_t element
             continue;
         }
         void *src = (unsigned char*) hm + (index * element_size) + key_offset;
-        if (0 == keycmp(key, src, key_size, is_string)) {
-            return slot_array_index * 8 + slot_index;
+        if (0 == keycmp(key, src, key_size, is_string) && !is_slot_removed) {
+            size_t pos = slot_array_index * 8 + slot_index;
+            if (bfutils_hashmap_header(hm)->element_free != NULL) {
+                bfutils_hashmap_header(hm)->element_free((unsigned char*) hm + (element_size * pos));
+            }
+            return pos;
         }
 
         slot_index++;
