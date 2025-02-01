@@ -52,6 +52,7 @@
               clang-tools
               bear
               gdb
+              ninja
             ];
           };
         }

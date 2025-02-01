@@ -73,7 +73,7 @@ HttpReq parse_http_request(const char *request) {
                     char *v = strtok_r(lines[i], ": ", &saveptr);
                     string_push_cstr(key, v);
                     v = strtok_r(NULL, "", &saveptr);
-                    string_push_cstr(value, v);
+                    string_push_cstr(value, v + 1);
                     string_hashmap_push(req.headers, key, value);
                 }
                 else {
@@ -162,6 +162,7 @@ char *get_file_mime_type(const char *path) {
     char absolute_path[PATH_MAX];
     path = realpath(path, absolute_path);
     int status = process_sync((char *[]) {"file", "-i", (char*) path, NULL}, NULL, &out, NULL);
+    (void) status;
 
     char *mime = NULL;
     for (int i = 0; i < strlen(out); i++) {
@@ -303,6 +304,7 @@ int main (int argc, char *argv[]) {
         do {
             char buffer[1024] = {0};
             l = recv(fd, buffer, 1024, 0);
+            (void)l;
             string_push_cstr(msg, buffer);
             if (poll(&fds, 1, 100) < 1) {
                 break;
