@@ -53,3 +53,7 @@ dkms.conf
 
 .direnv/
 .envrc
+
+#bfutils_build
+build
+target/
